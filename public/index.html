@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Movie Theater</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        background: #1a1a1a;
+        color: white;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        overflow: hidden;
+      }
+
+      #videoContainer {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        background: black;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #movieVideo {
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+      }
+
+      #controls {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.8);
+        padding: 15px 25px;
+        border-radius: 10px;
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        transition: opacity 0.3s ease;
+      }
+
+      #controls:hover {
+        opacity: 1;
+      }
+
+      button {
+        background: #5865f2;
+        border: none;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background 0.2s ease;
+      }
+
+      button:hover {
+        background: #4752c4;
+      }
+
+      button:disabled {
+        background: #666;
+        cursor: not-allowed;
+      }
+
+      #timeDisplay {
+        font-size: 14px;
+        color: #ccc;
+      }
+
+      #seekBar {
+        width: 200px;
+        height: 5px;
+        background: #666;
+        border-radius: 5px;
+        cursor: pointer;
+        position: relative;
+      }
+
+      #seekProgress {
+        height: 100%;
+        background: #5865f2;
+        border-radius: 5px;
+        width: 0%;
+        transition: width 0.1s ease;
+      }
+
+      #volumeSlider {
+        width: 80px;
+      }
+
+      #loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 18px;
+        color: #ccc;
+      }
+
+      .user-list {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        background: rgba(0, 0, 0, 0.8);
+        padding: 10px;
+        border-radius: 8px;
+        max-width: 200px;
+      }
+
+      .user-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 5px;
+        font-size: 12px;
+      }
+
+      .user-avatar {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        margin-right: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="videoContainer">
+      <div id="loading">Loading Discord Activity...</div>
+      <video
+        id="movieVideo"
+        controls
+        preload="metadata"
+        style="display: none"
+      ></video>
+
+      <div id="controls" style="display: none">
+        <button id="playPauseBtn">Play</button>
+        <div id="timeDisplay">00:00 / 00:00</div>
+        <div id="seekBar">
+          <div id="seekProgress"></div>
+        </div>
+        <input type="range" id="volumeSlider" min="0" max="100" value="50" />
+        <button id="fullscreenBtn">Fullscreen</button>
+      </div>
+
+      <div class="user-list" id="userList" style="display: none">
+        <div style="font-weight: bold; margin-bottom: 8px">
+          Watching Together
+        </div>
+        <div id="userListContent"></div>
+      </div>
+    </div>
+
+    <script src="https://discord.com/api/embedded-app-sdk"></script>
+    <script>
+      const { DiscordSDK } = window;
+
+      // Initialize Discord SDK
+      const discordSdk = new DiscordSDK(
+        process.env.DISCORD_CLIENT_ID || "YOUR_CLIENT_ID_HERE"
+      );
+
+      let videoElement = document.getElementById("movieVideo");
+      let playPauseBtn = document.getElementById("playPauseBtn");
+      let timeDisplay = document.getElementById("timeDisplay");
+      let seekBar = document.getElementById("seekBar");
+      let seekProgress = document.getElementById("seekProgress");
+      let volumeSlider = document.getElementById("volumeSlider");
+      let loading = document.getElementById("loading");
+      let controls = document.getElementById("controls");
+      let userList = document.getElementById("userList");
+      let userListContent = document.getElementById("userListContent");
+
+      // Video synchronization state
+      let isSyncing = false;
+      let lastSyncTime = 0;
+
+      async function initializeApp() {
+        try {
+          // Authenticate with Discord
+          await discordSdk.ready();
+
+          // Get current user and channel info
+          const { user } = await discordSdk.commands.authenticate({
+            access_token: await getAccessToken(),
+          });
+
+          console.log("Discord user:", user);
+
+          // Set up activity
+          await discordSdk.commands.setActivity({
+            activity: {
+              type: 0,
+              details: "Watching a movie together",
+              state: "Movie Theater",
+              timestamps: {
+                start: Date.now(),
+              },
+            },
+          });
+
+          // Load the video
+          await loadVideo();
+
+          // Set up real-time synchronization
+          setupVideoSync();
+
+          // Show the interface
+          loading.style.display = "none";
+          videoElement.style.display = "block";
+          controls.style.display = "flex";
+          userList.style.display = "block";
+
+          // Update user list
+          updateUserList();
+        } catch (error) {
+          console.error("Failed to initialize Discord Activity:", error);
+          loading.textContent = "Failed to load. Please try refreshing.";
+        }
+      }
+
+      async function getAccessToken() {
+        // In a real implementation, you'd handle OAuth flow here
+        // For now, this is a placeholder
+        return "access_token_placeholder";
+      }
+
+      async function loadVideo() {
+        // Set video source - in production, serve this from your server
+        videoElement.src = "/api/video/stream"; // We'll create this endpoint
+
+        videoElement.addEventListener("loadedmetadata", () => {
+          updateTimeDisplay();
+        });
+
+        videoElement.addEventListener("timeupdate", () => {
+          updateTimeDisplay();
+          updateSeekBar();
+
+          // Broadcast time sync every 5 seconds
+          if (!isSyncing && Date.now() - lastSyncTime > 5000) {
+            broadcastTimeSync();
+            lastSyncTime = Date.now();
+          }
+        });
+
+        // Video control events
+        playPauseBtn.addEventListener("click", togglePlayPause);
+        seekBar.addEventListener("click", handleSeek);
+        volumeSlider.addEventListener("input", handleVolumeChange);
+
+        document
+          .getElementById("fullscreenBtn")
+          .addEventListener("click", () => {
+            if (videoElement.requestFullscreen) {
+              videoElement.requestFullscreen();
+            }
+          });
+      }
+
+      function setupVideoSync() {
+        // Listen for sync messages from other participants
+        discordSdk.subscribe(
+          "ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE",
+          (event) => {
+            updateUserList();
+
+            // Handle video synchronization
+            if (event.participants) {
+              event.participants.forEach((participant) => {
+                if (participant.user.id !== discordSdk.clientId) {
+                  // Sync with other participants
+                  requestTimeSync();
+                }
+              });
+            }
+          }
+        );
+      }
+
+      function togglePlayPause() {
+        if (videoElement.paused) {
+          videoElement.play();
+          playPauseBtn.textContent = "Pause";
+          broadcastPlayState(true);
+        } else {
+          videoElement.pause();
+          playPauseBtn.textContent = "Play";
+          broadcastPlayState(false);
+        }
+      }
+
+      function handleSeek(event) {
+        const rect = seekBar.getBoundingClientRect();
+        const percent = (event.clientX - rect.left) / rect.width;
+        const newTime = percent * videoElement.duration;
+        videoElement.currentTime = newTime;
+        broadcastSeek(newTime);
+      }
+
+      function handleVolumeChange() {
+        videoElement.volume = volumeSlider.value / 100;
+      }
+
+      function updateTimeDisplay() {
+        const current = formatTime(videoElement.currentTime);
+        const duration = formatTime(videoElement.duration);
+        timeDisplay.textContent = `${current} / ${duration}`;
+      }
+
+      function updateSeekBar() {
+        const percent =
+          (videoElement.currentTime / videoElement.duration) * 100;
+        seekProgress.style.width = percent + "%";
+      }
+
+      function formatTime(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins.toString().padStart(2, "0")}:${secs
+          .toString()
+          .padStart(2, "0")}`;
+      }
+
+      function updateUserList() {
+        // This would be populated with actual Discord participants
+        userListContent.innerHTML = `
+                <div class="user-item">
+                    <img class="user-avatar" src="https://cdn.discordapp.com/embed/avatars/0.png" alt="User">
+                    <span>Movie Host</span>
+                </div>
+            `;
+      }
+
+      // Synchronization functions
+      function broadcastTimeSync() {
+        // Send current playback state to other participants
+        discordSdk.commands.sendMessage({
+          type: "VIDEO_SYNC",
+          data: {
+            currentTime: videoElement.currentTime,
+            paused: videoElement.paused,
+            timestamp: Date.now(),
+          },
+        });
+      }
+
+      function broadcastPlayState(playing) {
+        discordSdk.commands.sendMessage({
+          type: "PLAY_STATE",
+          data: {
+            playing: playing,
+            currentTime: videoElement.currentTime,
+            timestamp: Date.now(),
+          },
+        });
+      }
+
+      function broadcastSeek(time) {
+        discordSdk.commands.sendMessage({
+          type: "SEEK",
+          data: {
+            currentTime: time,
+            timestamp: Date.now(),
+          },
+        });
+      }
+
+      function requestTimeSync() {
+        discordSdk.commands.sendMessage({
+          type: "REQUEST_SYNC",
+        });
+      }
+
+      // Initialize the app when Discord SDK is ready
+      initializeApp();
+    </script>
+  </body>
+</html>
