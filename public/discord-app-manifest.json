@@ -1,0 +1,22 @@
+{
+  "name": "Movie Theater Bot",
+  "description": "Watch movies together in Discord voice channels",
+  "version": "1.0.0",
+  "icon": "https://cdn.discordapp.com/embed/avatars/0.png",
+  "activities": [
+    {
+      "name": "Movie Theater",
+      "description": "Watch movies together",
+      "type": "EMBEDDED",
+      "platform": "WEB",
+      "launch_url": "http://localhost:3000",
+      "supported_platforms": ["DESKTOP", "MOBILE"],
+      "orientation_lock_landscape": false,
+      "orientation_lock_portrait": false,
+      "tablet_support": true,
+      "requires_age_gate": false,
+      "max_participants": 20,
+      "tags": ["entertainment", "movies", "social"]
+    }
+  ]
+}

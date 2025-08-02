@@ -1,5 +1,5 @@
 import express from "express";
-import { statSync, createReadStream, existsSync } from "fs";
+import { statSync, createReadStream, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import cors from "cors";
 
@@ -22,6 +22,8 @@ app.use(
       "https://discord.com",
       "https://canary.discord.com",
       "https://ptb.discord.com",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000"
     ],
     credentials: true,
   })
@@ -30,25 +32,52 @@ app.use(
 app.use(express.json());
 app.use(express.static("public"));
 
-const VIDEO_PATH = join(
-  process.cwd(),
-  "movies",
-  "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster).mp4"
-);
+// Find the movie file dynamically
+const MOVIES_DIR = join(process.cwd(), "movies");
+let VIDEO_PATH = "";
+
+if (existsSync(MOVIES_DIR)) {
+  const files = readdirSync(MOVIES_DIR);
+  const videoFile = files.find(file => 
+    file.toLowerCase().endsWith('.mp4') || 
+    file.toLowerCase().endsWith('.mkv') || 
+    file.toLowerCase().endsWith('.avi') ||
+    file.toLowerCase().endsWith('.mov')
+  );
+  
+  if (videoFile) {
+    VIDEO_PATH = join(MOVIES_DIR, videoFile);
+    console.log(`🎬 Found video file: ${videoFile}`);
+  }
+}
 
 app.get("/", (req, res) => {
-  res.sendFile(join(process.cwd(), "public", "index.html"));
+  const fs = require('fs');
+  const path = require('path');
+  
+  // Read the HTML file and inject the Discord Application ID
+  let html = fs.readFileSync(path.join(process.cwd(), "public", "index.html"), 'utf8');
+  html = html.replace('{{ DISCORD_APPLICATION_ID }}', process.env.DISCORD_APPLICATION_ID || '');
+  
+  res.send(html);
 });
 
 app.get("/api/video/stream", (req, res) => {
   try {
-    if (!existsSync(VIDEO_PATH)) {
-      return res.status(404).json({ error: "Video file not found" });
+    if (!VIDEO_PATH || !existsSync(VIDEO_PATH)) {
+      return res.status(404).json({ 
+        error: "Video file not found",
+        path: VIDEO_PATH,
+        moviesDir: MOVIES_DIR,
+        exists: existsSync(MOVIES_DIR)
+      });
     }
 
     const stat = statSync(VIDEO_PATH);
     const fileSize = stat.size;
     const range = req.headers.range;
+
+    console.log(`📺 Streaming request: ${range ? 'Range' : 'Full'} - ${fileSize} bytes`);
 
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
@@ -67,7 +96,9 @@ app.get("/api/video/stream", (req, res) => {
         "Accept-Ranges": "bytes",
         "Content-Length": chunksize.toString(),
         "Content-Type": "video/mp4",
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
       };
 
       res.writeHead(206, head);
@@ -77,7 +108,9 @@ app.get("/api/video/stream", (req, res) => {
         "Content-Length": fileSize.toString(),
         "Content-Type": "video/mp4",
         "Accept-Ranges": "bytes",
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
       };
 
       res.writeHead(200, head);
@@ -86,6 +119,30 @@ app.get("/api/video/stream", (req, res) => {
   } catch (error) {
     console.error("Video streaming error:", error);
     res.status(500).json({ error: "Failed to stream video" });
+  }
+});
+
+app.get("/api/video/info", (req, res) => {
+  try {
+    if (!VIDEO_PATH || !existsSync(VIDEO_PATH)) {
+      return res.status(404).json({ 
+        error: "Video file not found",
+        path: VIDEO_PATH 
+      });
+    }
+
+    const stat = statSync(VIDEO_PATH);
+    const fileName = VIDEO_PATH.split('/').pop() || VIDEO_PATH.split('\\').pop();
+    
+    res.json({
+      fileName,
+      fileSize: stat.size,
+      lastModified: stat.mtime,
+      path: VIDEO_PATH
+    });
+  } catch (error) {
+    console.error("Video info error:", error);
+    res.status(500).json({ error: "Failed to get video info" });
   }
 });
 
@@ -127,9 +184,11 @@ app.get("/api/auth/discord/callback", async (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
-    videoExists: existsSync(VIDEO_PATH),
+    videoExists: !!VIDEO_PATH && existsSync(VIDEO_PATH),
     videoPath: VIDEO_PATH,
+    moviesDir: MOVIES_DIR,
     runtime: "bun",
+    bunVersion: Bun.version
   });
 });
 
@@ -147,8 +206,9 @@ app.use(
 
 const server = app.listen(PORT, () => {
   console.log(`🎬 Video streaming server running on http://localhost:${PORT}`);
-  console.log(`📹 Video file: ${VIDEO_PATH}`);
-  console.log(`✅ Video exists: ${existsSync(VIDEO_PATH)}`);
+  console.log(`📂 Movies directory: ${MOVIES_DIR}`);
+  console.log(`📹 Video file: ${VIDEO_PATH || 'Not found'}`);
+  console.log(`✅ Video exists: ${!!VIDEO_PATH && existsSync(VIDEO_PATH)}`);
   console.log(`⚡ Runtime: Bun ${Bun.version}`);
 
   if (process.env.NODE_ENV !== "production") {
